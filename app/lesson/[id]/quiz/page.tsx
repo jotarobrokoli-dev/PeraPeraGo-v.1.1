@@ -102,6 +102,8 @@ export default function QuizPage() {
         recognitionRef.current = null
       }
       window.speechSynthesis.cancel()
+      setIsRecording(false)
+      setIsPlaying(false)
     }
   }, [currentQuestion, lesson])
 
@@ -132,7 +134,9 @@ export default function QuizPage() {
   const displayJapanese = question.japanese?.replace("[name]", studentName) ?? ""
   const displayRomaji = question.romaji?.replace("[name]", studentName) ?? ""
   const displayTranslation = question.translation?.replace("[name]", studentName) ?? ""
-  const displayCorrectAnswer = (question.correctAnswer as string)?.replace("[name]", studentName) ?? ""
+  const displayCorrectAnswer = typeof question.correctAnswer === "string"
+    ? question.correctAnswer.replace("[name]", studentName)
+    : ""
 
   const isMC = question.type === "multiple-choice"
   const isListening = question.type === "listening"
@@ -285,6 +289,8 @@ export default function QuizPage() {
       setShowResult(false)
       setSpokenText("")
       setSpeakingScore(null)
+      setIsRecording(false)
+      setIsPlaying(false)
     } else {
       const finalQuizRaw = Math.round((correctCountRef.current / totalQuestions) * 100)
 
