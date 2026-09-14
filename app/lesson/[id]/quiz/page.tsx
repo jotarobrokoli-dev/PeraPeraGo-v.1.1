@@ -219,7 +219,7 @@ export default function QuizPage() {
       if (!isStillCurrent()) return
       setIsRecording(false)
     }
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: any) => {
       if (!isStillCurrent()) return
       const raw = event.results[0][0].transcript
       // Normalize: kanji→hiragana, katakana→hiragana, clean punctuation

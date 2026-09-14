@@ -79,6 +79,12 @@ export default function ResultPage() {
   } = useLearning()
 
   const lesson = getLessonById(lessonId)
+  const playableLessons = lessons.filter((l) => l.steps.length > 0)
+  const currentIndex = playableLessons.findIndex((l) => l.id === lessonId)
+  const nextLesson = currentIndex >= 0 && currentIndex < playableLessons.length - 1
+    ? playableLessons[currentIndex + 1]
+    : null
+
   const timestampRef = useRef<string>("")
   const [timestamp, setTimestamp] = useState<string>("")
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle")

@@ -88,7 +88,7 @@ export default function LessonPage() {
     recognition.onstart = () => setIsRecording(true)
     recognition.onend = () => setIsRecording(false)
     recognition.onerror = () => setIsRecording(false)
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: any) => {
       const raw = event.results[0][0].transcript
       setSpokenText(normalizeJapanese(raw))
     }

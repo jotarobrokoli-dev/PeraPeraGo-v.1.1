@@ -50,6 +50,7 @@ export interface QuizQuestion {
   correctAnswer: string | number
   audioText?: string
   pairs?: Array<{ japanese: string; romaji: string; indonesian: string }>
+  useStudentName?: boolean
 }
 
 export interface Lesson {
