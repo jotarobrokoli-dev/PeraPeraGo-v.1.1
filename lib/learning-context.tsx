@@ -1,24 +1,50 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react"
+import { lessons } from "@/lib/lesson-data"
 
-interface LearningState {
+export interface LessonRecord {
+  currentLessonStep: number
+  lessonProgress: number
+  isLessonCompleted: boolean
+  isQuizCompleted: boolean
+  quizScore: number
+  speakingScores: number[]
+  listeningScore: number
+  resultSubmitted: boolean
+}
+
+export const defaultLessonRecord: LessonRecord = {
+  currentLessonStep: 1,
+  lessonProgress: 0,
+  isLessonCompleted: false,
+  isQuizCompleted: false,
+  quizScore: 0,
+  speakingScores: [],
+  listeningScore: 0,
+  resultSubmitted: false,
+}
+
+export interface LearningState {
   studentName: string
   kelas: string
+  completedLessons: string[]
+  lessonRecords: Record<string, LessonRecord>
+  // Backward compatibility fields
   lessonProgress: number
   currentLessonStep: number
   listeningScore: number
   speakingScore: number
-  speakingScores: number[]   // individual speaking scores from quiz
+  speakingScores: number[]
   quizScore: number
   isLessonCompleted: boolean
   isListeningCompleted: boolean
   isSpeakingCompleted: boolean
   isQuizCompleted: boolean
-  resultSubmitted: boolean   // guards against duplicate sheet submissions
+  resultSubmitted: boolean
 }
 
-interface LearningContextType extends LearningState {
+export interface LearningContextType extends LearningState {
   setStudentName: (name: string) => void
   setKelas: (kelas: string) => void
   setLessonProgress: (progress: number) => void
@@ -33,11 +59,20 @@ interface LearningContextType extends LearningState {
   setIsQuizCompleted: (completed: boolean) => void
   setResultSubmitted: (submitted: boolean) => void
   resetProgress: () => void
+
+  // Multi-lesson methods
+  isLessonUnlocked: (lessonId: string) => boolean
+  completeLesson: (lessonId: string) => void
+  getLessonRecord: (lessonId: string) => LessonRecord
+  updateLessonRecord: (lessonId: string, updates: Partial<LessonRecord>) => void
+  resetLessonProgress: (lessonId: string) => void
 }
 
 const defaultState: LearningState = {
   studentName: "",
   kelas: "",
+  completedLessons: [],
+  lessonRecords: {},
   lessonProgress: 0,
   currentLessonStep: 1,
   listeningScore: 0,
@@ -51,6 +86,15 @@ const defaultState: LearningState = {
   resultSubmitted: false,
 }
 
+export function checkIsLessonUnlocked(lessonId: string, completedLessons: string[]): boolean {
+  const playableLessons = lessons.filter((l) => l.steps && l.steps.length > 0)
+  const idx = playableLessons.findIndex((l) => l.id === lessonId)
+  if (idx === -1) return false
+  if (idx === 0) return true
+  const prevLesson = playableLessons[idx - 1]
+  return completedLessons.includes(prevLesson.id)
+}
+
 const LearningContext = createContext<LearningContextType | undefined>(undefined)
 
 export function LearningProvider({ children }: { children: ReactNode }) {
@@ -62,11 +106,34 @@ export function LearningProvider({ children }: { children: ReactNode }) {
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        // Merge with defaultState so any new fields added in future
-        // versions don't cause undefined errors on old saved data
-        setState({ ...defaultState, ...parsed })
+        const completed: string[] = Array.isArray(parsed.completedLessons) ? parsed.completedLessons : []
+        
+        // Backward-compat migration: if student had completed quiz previously
+        if (parsed.isQuizCompleted && !completed.includes("aisatsu")) {
+          completed.push("aisatsu")
+        }
+
+        const records: Record<string, LessonRecord> = parsed.lessonRecords || {}
+        if (parsed.isQuizCompleted && !records["aisatsu"]) {
+          records["aisatsu"] = {
+            currentLessonStep: parsed.currentLessonStep || 1,
+            lessonProgress: parsed.lessonProgress || 100,
+            isLessonCompleted: parsed.isLessonCompleted ?? true,
+            isQuizCompleted: parsed.isQuizCompleted ?? true,
+            quizScore: parsed.quizScore || 0,
+            speakingScores: parsed.speakingScores || [],
+            listeningScore: parsed.listeningScore || 0,
+            resultSubmitted: parsed.resultSubmitted ?? false,
+          }
+        }
+
+        setState({
+          ...defaultState,
+          ...parsed,
+          completedLessons: completed,
+          lessonRecords: records,
+        })
       } catch {
-        // Corrupt data — start fresh
         localStorage.removeItem("peraperago-learning-state")
       }
     }
@@ -92,7 +159,66 @@ export function LearningProvider({ children }: { children: ReactNode }) {
   const setIsSpeakingCompleted = (completed: boolean) => setState((prev) => ({ ...prev, isSpeakingCompleted: completed }))
   const setIsQuizCompleted = (completed: boolean) => setState((prev) => ({ ...prev, isQuizCompleted: completed }))
   const setResultSubmitted = (submitted: boolean) => setState((prev) => ({ ...prev, resultSubmitted: submitted }))
-  
+
+  const isLessonUnlocked = (lessonId: string) => {
+    return checkIsLessonUnlocked(lessonId, state.completedLessons)
+  }
+
+  const completeLesson = (lessonId: string) => {
+    setState((prev) => {
+      const updatedCompleted = prev.completedLessons.includes(lessonId)
+        ? prev.completedLessons
+        : [...prev.completedLessons, lessonId]
+
+      const existingRecord = prev.lessonRecords[lessonId] || { ...defaultLessonRecord }
+      const updatedRecords = {
+        ...prev.lessonRecords,
+        [lessonId]: {
+          ...existingRecord,
+          isLessonCompleted: true,
+          isQuizCompleted: true,
+        },
+      }
+
+      return {
+        ...prev,
+        completedLessons: updatedCompleted,
+        lessonRecords: updatedRecords,
+        isLessonCompleted: true,
+        isQuizCompleted: true,
+      }
+    })
+  }
+
+  const getLessonRecord = (lessonId: string): LessonRecord => {
+    return state.lessonRecords[lessonId] || { ...defaultLessonRecord }
+  }
+
+  const updateLessonRecord = (lessonId: string, updates: Partial<LessonRecord>) => {
+    setState((prev) => {
+      const existing = prev.lessonRecords[lessonId] || { ...defaultLessonRecord }
+      const updated = { ...existing, ...updates }
+      return {
+        ...prev,
+        lessonRecords: {
+          ...prev.lessonRecords,
+          [lessonId]: updated,
+        },
+      }
+    })
+  }
+
+  const resetLessonProgress = (lessonId: string) => {
+    setState((prev) => {
+      const newRecords = { ...prev.lessonRecords }
+      delete newRecords[lessonId]
+      return {
+        ...prev,
+        lessonRecords: newRecords,
+      }
+    })
+  }
+
   const resetProgress = () => {
     setState((prev) => ({
       ...defaultState,
@@ -127,6 +253,11 @@ export function LearningProvider({ children }: { children: ReactNode }) {
         setIsQuizCompleted,
         setResultSubmitted,
         resetProgress,
+        isLessonUnlocked,
+        completeLesson,
+        getLessonRecord,
+        updateLessonRecord,
+        resetLessonProgress,
       }}
     >
       {children}

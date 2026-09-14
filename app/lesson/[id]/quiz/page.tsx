@@ -32,7 +32,16 @@ export default function QuizPage() {
   const params = useParams()
   const lessonId = params.id as string
 
-  const { studentName, setQuizScore, setIsQuizCompleted, addSpeakingScore, setListeningScore } = useLearning()
+  const {
+    studentName,
+    isLessonUnlocked,
+    getLessonRecord,
+    updateLessonRecord,
+    setQuizScore,
+    setIsQuizCompleted,
+    addSpeakingScore,
+    setListeningScore,
+  } = useLearning()
 
   const [currentQuestion, setCurrentQuestion] = useState(0)
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null)
@@ -44,6 +53,8 @@ export default function QuizPage() {
   const [isRecording, setIsRecording] = useState(false)
   const [spokenText, setSpokenText] = useState("")
   const [speakingScore, setSpeakingScore] = useState<number | null>(null)
+  const [speakingAttempts, setSpeakingAttempts] = useState(0)
+  const speakingAttemptsRef = useRef(0)
 
   // Listening state
   const [isPlaying, setIsPlaying] = useState(false)
@@ -75,14 +86,18 @@ export default function QuizPage() {
   }, [studentName, router])
 
   useEffect(() => {
-    if (lesson && lesson.isLocked) router.push("/dashboard")
-  }, [lesson, router])
+    if (lesson && !isLessonUnlocked(lesson.id)) {
+      router.push("/dashboard")
+    }
+  }, [lesson, isLessonUnlocked, router])
 
   // Reset per-question state when question changes
   useEffect(() => {
     setHasPlayedAudio(false)
     setMatchingAttempt({ selectedLeft: null, matched: {}, incorrect: [] })
     setMatchingDone(false)
+    setSpeakingAttempts(0)
+    speakingAttemptsRef.current = 0
     if (lesson) {
       const q = lesson.quiz[currentQuestion]
       if (q?.type === "matching" && q.pairs) {
@@ -132,7 +147,6 @@ export default function QuizPage() {
   const progress = ((currentQuestion + 1) / totalQuestions) * 100
 
   const displayJapanese = question.japanese?.replace("[name]", studentName) ?? ""
-  const displayRomaji = question.romaji?.replace("[name]", studentName) ?? ""
   const displayTranslation = question.translation?.replace("[name]", studentName) ?? ""
   const displayCorrectAnswer = typeof question.correctAnswer === "string"
     ? question.correctAnswer.replace("[name]", studentName)
@@ -164,6 +178,8 @@ export default function QuizPage() {
 
   // ── Speech Recognition ─────────────────────────────────────
   const startRecording = useCallback(() => {
+    if (speakingAttemptsRef.current >= 2) return
+
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
       alert("Browser tidak mendukung Speech Recognition. Gunakan Chrome.")
@@ -211,9 +227,27 @@ export default function QuizPage() {
       setSpokenText(normalized)
       const sim = calculateSimilarity(normalized, displayCorrectAnswer)
       setSpeakingScore(sim)
+
+      const currentAttempts = speakingAttemptsRef.current + 1
+      speakingAttemptsRef.current = currentAttempts
+      setSpeakingAttempts(currentAttempts)
+
+      // Jika sudah 2x berbicara menggunakan mic, langsung otomatis dinilai (benar/salah)
+      if (currentAttempts >= 2) {
+        if (sim >= 60) {
+          correctCountRef.current += 1
+          setScore(correctCountRef.current)
+        }
+        addSpeakingScore(sim)
+        const rec = getLessonRecord(lessonId)
+        updateLessonRecord(lessonId, {
+          speakingScores: [...rec.speakingScores, sim],
+        })
+        setShowResult(true)
+      }
     }
     recognition.start()
-  }, [displayCorrectAnswer])
+  }, [displayCorrectAnswer, lessonId, addSpeakingScore, getLessonRecord, updateLessonRecord])
 
   // ── Submit handlers ────────────────────────────────────────
   const handleSubmitMC = () => {
@@ -227,9 +261,13 @@ export default function QuizPage() {
   }
 
   const handleSubmitSpeaking = () => {
-    if (speakingScore === null) return
+    if (speakingScore === null || showResult) return
     if (speakingScore >= 60) { correctCountRef.current += 1; setScore(correctCountRef.current) }
     addSpeakingScore(speakingScore)
+    const rec = getLessonRecord(lessonId)
+    updateLessonRecord(lessonId, {
+      speakingScores: [...rec.speakingScores, speakingScore],
+    })
     setShowResult(true)
   }
 
@@ -283,6 +321,9 @@ export default function QuizPage() {
     }
     window.speechSynthesis.cancel()
 
+    setSpeakingAttempts(0)
+    speakingAttemptsRef.current = 0
+
     if (currentQuestion < totalQuestions - 1) {
       setCurrentQuestion((p) => p + 1)
       setSelectedAnswer(null)
@@ -298,6 +339,12 @@ export default function QuizPage() {
         ? Math.round(listeningScoresRef.current.reduce((a, b) => a + b, 0) / listeningScoresRef.current.length)
         : 0
       setListeningScore(avgListening)
+
+      updateLessonRecord(lessonId, {
+        quizScore: finalQuizRaw,
+        listeningScore: avgListening,
+        isQuizCompleted: true,
+      })
 
       setQuizScore(finalQuizRaw)
       setIsQuizCompleted(true)
@@ -416,12 +463,9 @@ export default function QuizPage() {
             {/* ── Speaking ── */}
             {isSpeaking && (
               <div className="space-y-4">
-                {/* Target card with listen + romaji + translation */}
+                {/* Target card with listen + translation */}
                 <div className="text-center py-5 bg-muted/30 rounded-xl space-y-2">
                   <p className="text-2xl md:text-3xl font-medium text-foreground">{displayJapanese}</p>
-                  {displayRomaji && (
-                    <p className="text-sm text-muted-foreground italic">{displayRomaji}</p>
-                  )}
                   {displayTranslation && (
                     <p className="text-xs text-muted-foreground">{displayTranslation}</p>
                   )}
@@ -439,24 +483,34 @@ export default function QuizPage() {
 
                 {/* Record button */}
                 {!showResult && (
-                  <div className="text-center">
+                  <div className="text-center space-y-2">
                     <Button
                       variant={isRecording ? "destructive" : "default"}
                       size="lg"
                       onClick={startRecording}
-                      disabled={isRecording}
+                      disabled={isRecording || speakingAttempts >= 2}
                       className="gap-2"
                     >
-                      {isRecording
-                        ? <><MicOff className="w-5 h-5 animate-pulse" /> Merekam...</>
-                        : <><Mic className="w-5 h-5" /> {spokenText ? "Rekam Ulang" : "Mulai Speaking"}</>
-                      }
+                      {isRecording ? (
+                        <>
+                          <MicOff className="w-5 h-5 animate-pulse" /> Merekam...
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-5 h-5" />
+                          {speakingAttempts === 0
+                            ? "Mulai Speaking"
+                            : speakingAttempts === 1
+                            ? "Rekam Ulang (Percobaan Terakhir)"
+                            : "Batas Percobaan Habis"}
+                        </>
+                      )}
                     </Button>
-                    {!spokenText && (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Tekan tombol lalu ucapkan kalimat di atas
-                      </p>
-                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {speakingAttempts === 0
+                        ? "Tekan tombol lalu ucapkan kalimat di atas (Maksimal 2x percobaan)"
+                        : "Percobaan 1 selesai · Tekan Kirim atau rekam 1x lagi untuk kesempatan terakhir"}
+                    </p>
                   </div>
                 )}
 
@@ -467,14 +521,19 @@ export default function QuizPage() {
                       <p className="text-xs text-muted-foreground mb-1">Kamu berkata:</p>
                       <p className="text-lg font-medium text-foreground">{spokenText}</p>
                     </div>
-                    {speakingScore !== null && (() => {
+
+                    {!showResult && speakingScore !== null && (() => {
                       const fb = getSpeakingFeedback(speakingScore)
                       return (
-                        <div className={`p-4 rounded-lg text-center space-y-1 ${
-                          speakingScore >= 75 ? "bg-green-50 dark:bg-green-950/20" :
-                          speakingScore >= 60 ? "bg-yellow-50 dark:bg-yellow-950/20" :
-                          "bg-orange-50 dark:bg-orange-950/20"
-                        }`}>
+                        <div
+                          className={`p-4 rounded-lg text-center space-y-1 ${
+                            speakingScore >= 75
+                              ? "bg-green-50 dark:bg-green-950/20"
+                              : speakingScore >= 60
+                              ? "bg-yellow-50 dark:bg-yellow-950/20"
+                              : "bg-orange-50 dark:bg-orange-950/20"
+                          }`}
+                        >
                           <p className={`text-xl font-bold ${fb.color}`}>{speakingScore}%</p>
                           <p className={`text-sm font-medium ${fb.color}`}>{fb.text}</p>
                         </div>
@@ -486,12 +545,26 @@ export default function QuizPage() {
                 {/* Speaking result after submit */}
                 {showResult && speakingScore !== null && (() => {
                   const fb = getSpeakingFeedback(speakingScore)
+                  const isPassed = speakingScore >= 60
                   return (
-                    <div className={`p-3 rounded-lg text-center ${speakingScore >= 60
-                      ? "bg-green-50 dark:bg-green-950/20"
-                      : "bg-orange-50 dark:bg-orange-950/20"}`}
+                    <div
+                      className={`p-4 rounded-xl text-center space-y-1.5 ${
+                        isPassed
+                          ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
+                          : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
+                      }`}
                     >
-                      <p className={`text-sm font-medium ${fb.color}`}>{fb.text}</p>
+                      <p
+                        className={`text-base font-bold ${
+                          isPassed
+                            ? "text-green-600 dark:text-green-400"
+                            : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {isPassed ? "✓ Benar!" : "✗ Kurang tepat"}
+                      </p>
+                      <p className="text-2xl font-extrabold text-foreground">{speakingScore}%</p>
+                      <p className="text-sm font-medium text-muted-foreground">{fb.text}</p>
                     </div>
                   )
                 })()}
@@ -524,7 +597,6 @@ export default function QuizPage() {
                           className={`w-full p-3 text-left rounded-lg border-2 transition-all ${style}`}
                         >
                           <p className="text-sm font-medium text-foreground leading-snug">{pair.japanese}</p>
-                          <p className="text-xs text-muted-foreground">{pair.romaji}</p>
                         </button>
                       )
                     })}

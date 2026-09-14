@@ -17,7 +17,9 @@ export default function LessonPage() {
 
   const {
     studentName,
-    currentLessonStep,
+    isLessonUnlocked,
+    getLessonRecord,
+    updateLessonRecord,
     setCurrentLessonStep,
     setLessonProgress,
     setIsLessonCompleted,
@@ -29,13 +31,19 @@ export default function LessonPage() {
 
   const lesson = getLessonById(lessonId)
 
+  // Local step initialized from this lesson's own record
+  const initialRecord = getLessonRecord(lessonId)
+  const [currentLessonStep, setStep] = useState(initialRecord.currentLessonStep || 1)
+
   useEffect(() => {
     if (!studentName) router.push("/")
   }, [studentName, router])
 
   useEffect(() => {
-    if (lesson && lesson.isLocked) router.push("/dashboard")
-  }, [lesson, router])
+    if (lesson && !isLessonUnlocked(lesson.id)) {
+      router.push("/dashboard")
+    }
+  }, [lesson, isLessonUnlocked, router])
 
   if (!studentName || !lesson) {
     if (!lesson && studentName) router.push("/dashboard")
@@ -44,8 +52,10 @@ export default function LessonPage() {
 
   const items = lesson.steps
   const totalSteps = items.length
-  const currentItem = items[currentLessonStep - 1]
-  const progress = (currentLessonStep / totalSteps) * 100
+  // Boundary check: ensure currentLessonStep is within 1..totalSteps
+  const safeStep = Math.min(Math.max(1, currentLessonStep), Math.max(1, totalSteps))
+  const currentItem = items[safeStep - 1]
+  const progress = (safeStep / totalSteps) * 100
 
   if (!currentItem) return null
 
@@ -86,20 +96,28 @@ export default function LessonPage() {
   }
 
   const handlePrevious = () => {
-    if (currentLessonStep > 1) {
-      setCurrentLessonStep(currentLessonStep - 1)
+    if (safeStep > 1) {
+      const prev = safeStep - 1
+      setStep(prev)
+      updateLessonRecord(lessonId, { currentLessonStep: prev })
+      setCurrentLessonStep(prev)
       setSpokenText("")
     }
   }
 
   const handleNext = () => {
-    if (currentLessonStep < totalSteps) {
-      setCurrentLessonStep(currentLessonStep + 1)
-      setLessonProgress((currentLessonStep / totalSteps) * 100)
+    if (safeStep < totalSteps) {
+      const next = safeStep + 1
+      const progressVal = (next / totalSteps) * 100
+      setStep(next)
+      updateLessonRecord(lessonId, { currentLessonStep: next, lessonProgress: progressVal })
+      setCurrentLessonStep(next)
+      setLessonProgress(progressVal)
       setSpokenText("")
     } else {
-      setLessonProgress(100)
+      updateLessonRecord(lessonId, { isLessonCompleted: true, lessonProgress: 100 })
       setIsLessonCompleted(true)
+      setLessonProgress(100)
       router.push(`/lesson/${lessonId}/quiz`)
     }
   }

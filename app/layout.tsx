@@ -42,8 +42,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="id" className="bg-background">
-      <body className="font-sans antialiased min-h-screen">
+    <html lang="id" className="bg-background" suppressHydrationWarning>
+      <body className="font-sans antialiased min-h-screen" suppressHydrationWarning>
         <LearningProvider>
           {children}
         </LearningProvider>
